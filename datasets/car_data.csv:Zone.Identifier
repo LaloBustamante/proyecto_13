@@ -1,0 +1,4 @@
+[ZoneTransfer]
+ZoneId=3
+ReferrerUrl=https://tripleten.com/
+HostUrl=https://practicum-content.s3.us-west-1.amazonaws.com/datasets/car_data.csv
