@@ -73,8 +73,8 @@ Esto es en lo que se fijarán los revisores al examinar tu proyecto:
 # Importar librerías
 import lightgbm as lgb
 import numpy as np
-import timeit as t
 import pandas as pd
+import xgboost as xgb
 
 from IPython.display import display
 from sklearn.compose import ColumnTransformer
@@ -85,7 +85,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.tree import DecisionTreeRegressor
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder
-
+from timeit import default_timer as timer
 
 
 # Cargar los datos
@@ -153,13 +153,11 @@ y = df['Price']
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
 
-# Preprocesamiento de características categóricas
-# Codificación de características categóricas para modelos que lo requieren
+# Preprocesamiento y codificación para modelos
 categorical_features = X.select_dtypes(include=['category']).columns
 preprocessor = ColumnTransformer(
     transformers=[
-        ('cat', OneHotEncoder(handle_unknown='ignore'), categorical_features)],
-    remainder='passthrough')
+        ('cat', OneHotEncoder(handle_unknown='ignore', min_frequency=0.05), categorical_features)], remainder='passthrough')
 
 
 '''
@@ -169,44 +167,48 @@ Modelos a considerar:
 Regresión lineal (prueba de cordura)
 Árbol de decisión
 Bosque aleatorio
-LightGBM (recomendado para datos de alta dimensionalidad y muchas categorías)
+LightGBM 
+XGBoost
 '''
 
 
-# Lista de modelos a probar
+# Configuración de modelos y ajustes de hiperparámetros básicos
 models = {
     'Linear Regression': LinearRegression(),
-    'Decision Tree': DecisionTreeRegressor(random_state=42),
-    'Random Forest': RandomForestRegressor(random_state=42, n_jobs=-1),
-    'LightGBM': lgb.LGBMRegressor(random_state=42, n_jobs=-1)
+    'Decision Tree': DecisionTreeRegressor(max_depth=10, random_state=42),
+    'Random Forest': RandomForestRegressor(n_estimators=50, max_depth=10, random_state=42, n_jobs=-1),
+    'LightGBM': lgb.LGBMRegressor(n_estimators=50, max_depth=10, learning_rate=0.1, random_state=42),
+    'XGBoost': xgb.XGBRegressor(n_estimators=50, max_depth=10, learning_rate=0.1, random_state=42)
 }
 
 # Entrenar y evaluar cada modelo
 results = {}
 for model_name, model in models.items():
-    pipeline = Pipeline(steps=[('preprocessor', preprocessor),
-                               ('regressor', model)])
-    # Entrenar
+    print(f"\nEntrenando modelo: {model_name}")
+    pipeline = Pipeline(steps=[('preprocessor', preprocessor), ('regressor', model)])
+    
+    start_time = timer()  # Tiempo de inicio
     pipeline.fit(X_train, y_train)
+    end_time = timer()  # Tiempo final
 
-    # Predicciones
+    # Predicciones y evaluación
     y_pred = pipeline.predict(X_test)
-
-    # Evaluación
     rmse = mean_squared_error(y_test, y_pred, squared=False)
     r2 = r2_score(y_test, y_pred)
-    results[model_name] = {'RMSE': rmse, 'R2': r2}
+    results[model_name] = {'RMSE': rmse, 'R2': r2, 'Train Time (s)': end_time - start_time}
 
-    print(f"{model_name} - RMSE: {rmse:.4f}, R2: {r2:.4f}")
+    print(f"{model_name} - RMSE: {rmse:.4f}, R2: {r2:.4f}, Train Time: {end_time - start_time:.2f} segundos")
 
 
 '''
-Análisis del Modelo
-Objetivo del Análisis El análisis del modelo busca evaluar y comparar la precisión y el rendimiento de los modelos de predicción de precio 
+Análisis del Modelo:
+
+Objetivo del Análisis: El análisis del modelo busca evaluar y comparar la precisión y el rendimiento de los modelos de predicción de precio 
 de vehículos de segunda mano, con énfasis en la métrica RMSE (raíz cuadrada del error cuadrático medio) y el coeficiente de determinación 
 𝑅2. Estos resultados ayudarán a determinar el modelo que mejor equilibra precisión y eficiencia para ser implementado en la app de 
 Rusty Bargain.
 '''
+
 
 # Resumen de resultados
 results_df = pd.DataFrame(results).T
@@ -218,46 +220,70 @@ best_model_name = results_df['RMSE'].idxmin()
 best_model = models[best_model_name]
 
 
-# Tiempo de predicción
-t.timeit(best_model.predict(X_test))
+# Medición de tiempo de predicción para el mejor modelo con pipeline completo
+best_pipeline = Pipeline(steps=[('preprocessor', preprocessor), ('regressor', best_model)])
+
+# Medir el tiempo de predicción en el conjunto de prueba
+start_time = timer()
+y_pred_best = best_pipeline.predict(X_test)
+end_time = timer()
+
+# Imprimir tiempo de predicción y métricas de evaluación del mejor modelo
+rmse_best = mean_squared_error(y_test, y_pred_best, squared=False)
+r2_best = r2_score(y_test, y_pred_best)
+print(f"Tiempo de predicción del mejor modelo ({best_model_name}): {end_time - start_time:.4f} segundos")
+print(f"RMSE del mejor modelo: {rmse_best:.4f}")
+print(f"R2 del mejor modelo: {r2_best:.4f}")
 
 
 '''
-Conclusiones del Análisis de Modelos y Recomendaciones
+Conclusiones del Análisis de Modelos y Recomendaciones  
+  
+Linear Regression:
 
-A partir de los resultados obtenidos para los modelos de regresión lineal y árbol de decisión:
+RMSE: 2890.02  
+𝑅<sup>2</sup>: 0.6054  
+Train Time: 2.50 segundos  
+Análisis: La regresión lineal tiene el peor rendimiento en términos de error (RMSE) y coeficiente de determinación (𝑅<sup>2</sup>), lo cual es esperado, ya que este modelo es lineal y no captura bien las relaciones complejas. Sin embargo, es una buena base para comparar otros modelos.  
+  
+Decision Tree:  
 
-Regresión Lineal
+RMSE: 2095.26  
+𝑅<sup>2</sup>: 0.7926  
+Train Time: 2.21 segundos  
+Análisis: El árbol de decisión mejora considerablemente el rendimiento con respecto a la regresión lineal, reduciendo el RMSE y aumentando 𝑅<sup>2</sup>, lo cual indica un mejor ajuste. Aunque es un modelo rápido y simple, su rendimiento es inferior al de los otros modelos más avanzados.  
 
-RMSE: 2914.06
-R²: 0.5988
-Este modelo explica aproximadamente el 59.88% de la varianza en los precios y presenta un error moderado, pero no es el modelo más preciso. 
-Debido a su simplicidad, podría ser útil en aplicaciones donde se requiera rapidez en la predicción, aunque en este caso no se aprovechan 
-las relaciones no lineales entre variables, resultando en una predicción menos precisa comparada con otros métodos.
+Random Forest:  
 
-Árbol de Decisión
+RMSE: 1994.40  
+𝑅<sup>2</sup>: 0.8121  
+Train Time: 23.14 segundos  
+Análisis: El bosque aleatorio muestra una mejora significativa en comparación con el árbol de decisión, y alcanza un buen equilibrio entre RMSE y 𝑅<sup>2</sup>. Sin embargo, el tiempo de entrenamiento es considerablemente mayor debido al ensamblado de múltiples árboles.  
 
-RMSE: 2146.58
-R²: 0.7823
-El árbol de decisión es significativamente más preciso que la regresión lineal. Con un 𝑅2 de 78.23%, este modelo es capaz de capturar 
-mejor las variaciones en el precio, lo cual lo hace más adecuado para nuestro caso. Esto sugiere que este modelo capta relaciones 
-complejas en los datos que pueden pasar desapercibidas en una regresión lineal.
+LightGBM:  
+
+RMSE: 1925.82  
+𝑅<sup>2</sup>: 0.8248  
+Train Time: 1.41 segundos  
+Análisis: LightGBM tiene un rendimiento excelente, logrando un RMSE bajo y un 𝑅<sup>2</sup> más alto en un tiempo de entrenamiento muy corto. Este modelo es eficiente y adecuado para grandes conjuntos de datos, mostrando una combinación de precisión y velocidad.
+
+XGBoost:  
+
+RMSE: 1772.34  
+𝑅<sup>2</sup>: 0.8516  
+Train Time: 2.63 segundos  
+Análisis: XGBoost es el mejor en términos de precisión, obteniendo el RMSE más bajo y el 𝑅<sup>2</sup> más alto entre todos los modelos. Aunque el tiempo de entrenamiento es mayor que LightGBM, el incremento en precisión lo convierte en la mejor elección para este conjunto de datos.
 '''
 
 '''
-Modelo Seleccionado
-Modelo Final: Árbol de Decisión
+Modelo Seleccionado   
+  
+Conclusión General:  
 
-Se seleccionó el árbol de decisión como modelo final debido a los siguientes factores:
+Mejor Modelo: XGBoost, ya que obtiene el mejor RMSE y R<sup>2</sup>, lo que indica una precisión superior en las predicciones.  
 
-Precisión: 
-Este modelo superó a la regresión lineal en términos de 𝑅2 y RMSE, mostrando una mayor capacidad para predecir precios con precisión. 
+Modelos Alternativos: LightGBM es una excelente alternativa si el tiempo de entrenamiento es un factor importante, ya que ofrece una precisión cercana a XGBoost en menos tiempo.  
 
-Capacidad de Captura de Relaciones Complejas: 
-El árbol de decisión es más adecuado para datos con relaciones no lineales, permitiéndole captar patrones relevantes en los datos de Rusty 
-Bargain.
-
-Balance de Velocidad y Exactitud: Aunque es más complejo que la regresión lineal, el árbol de decisión sigue siendo relativamente rápido 
-en comparación con otros modelos avanzados, lo cual es beneficioso en un contexto donde la velocidad de predicción también es relevante.
+Recomendación: Considerar el uso de XGBoost para este caso, ya que su mayor precisión beneficia la predicción del valor de los autos usados, aunque LightGBM podría usarse si se requiere un modelo con un balance óptimo entre precisión y velocidad.
 '''
 
